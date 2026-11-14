@@ -17,6 +17,7 @@
 #include <mca/common/mca_sysfs.h>
 #include <linux/slab.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/string.h>
@@ -27,6 +28,9 @@
 /* Who a bare ship-mode write is recorded as, and which path it is for. */
 #define MCA_CHARGE_IF_SHIPMODE_USER	"micharger"
 #define MCA_CHARGE_IF_SHIPMODE_TYPE	"buck"
+
+/* Who a charging_enabled write is recorded as. */
+#define MCA_CHARGE_IF_CHARGING_USER	"charging_control"
 
 /* The subdirectory of xm_power/charger the attributes appear under. */
 #define MCA_CHARGE_IF_DIR_NAME		"charge_interface"
@@ -40,6 +44,7 @@ enum mca_charge_if_sysfs_type {
 	MCA_CHRAGE_IF_SYSFS_POWER_LIMIT,
 	MCA_CHRAGE_IF_SYSFS_SUSPEND_STATUS,
 	MCA_CHRAGE_IF_SYSFS_SHIPMODE,
+	MCA_CHARGE_IF_SYSFS_CHARGING_ENABLED,
 };
 
 /* The names userspace uses for the charging paths. */
@@ -124,7 +129,36 @@ static struct mca_sysfs_attr_info mca_charge_if_sysfs_field_tbl[] = {
 			  MCA_CHRAGE_IF_SYSFS_SUSPEND_STATUS, suspend_status),
 	mca_sysfs_attr_rw(mca_charge_if_sysfs, 0640,
 			  MCA_CHRAGE_IF_SYSFS_SHIPMODE, shipmode_count_reset),
+	mca_sysfs_attr_rw(mca_charge_if_sysfs, 0640,
+			  MCA_CHARGE_IF_SYSFS_CHARGING_ENABLED, charging_enabled),
 };
+
+/*
+ * A plain on/off switch for charging, for userspace that only writes and
+ * reads back one value (such as charging control).  It votes on every path
+ * as its own client, so the charger keeps powering the device while
+ * charging is off.
+ */
+static DEFINE_MUTEX(g_mca_charging_lock);
+static bool g_mca_charging_enabled = true;
+
+static void mca_charge_if_set_charging_enabled(bool enabled)
+{
+	struct mca_charge_if_ops *ops;
+	int i;
+
+	mutex_lock(&g_mca_charging_lock);
+	for (i = MCA_CHARGE_IF_CHG_TYPE_BEGIN; i < MCA_CHARGE_IF_CHG_TYPE_ALL;
+	     i++) {
+		ops = g_mca_charge_if_ops[i];
+		if (ops && ops->set_charge_enable)
+			ops->set_charge_enable(MCA_CHARGE_IF_CHARGING_USER,
+					       enabled, ops->data);
+	}
+
+	g_mca_charging_enabled = enabled;
+	mutex_unlock(&g_mca_charging_lock);
+}
 
 /*
  * Whether any charging path has its input suspended.  Each path answers in
@@ -181,6 +215,8 @@ static ssize_t mca_charge_if_sysfs_show(struct device *dev,
 		return -EINVAL;
 
 	switch (info->sysfs_attr_name) {
+	case MCA_CHARGE_IF_SYSFS_CHARGING_ENABLED:
+		return sysfs_emit(buf, "%d\n", g_mca_charging_enabled);
 	case MCA_CHRAGE_IF_SYSFS_SUSPEND_STATUS:
 		return mca_charge_suspend_state_show(buf);
 	case MCA_CHRAGE_IF_SYSFS_SHIPMODE:
@@ -257,6 +293,16 @@ static ssize_t mca_charge_if_sysfs_store(struct device *dev,
 				     ARRAY_SIZE(mca_charge_if_sysfs_field_tbl));
 	if (!info)
 		return -EINVAL;
+
+	if (info->sysfs_attr_name == MCA_CHARGE_IF_SYSFS_CHARGING_ENABLED) {
+		bool enabled;
+
+		if (kstrtobool(buf, &enabled))
+			return -EINVAL;
+
+		mca_charge_if_set_charging_enabled(enabled);
+		return count;
+	}
 
 	if (info->sysfs_attr_name == MCA_CHRAGE_IF_SYSFS_SHIPMODE) {
 		/* Service tooling writes the bare value. */
