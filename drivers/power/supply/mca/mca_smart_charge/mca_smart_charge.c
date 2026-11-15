@@ -21,6 +21,7 @@
 #define MCA_LOG_TAG "mca_smart_charge"
 #endif
 
+#include <asm/unaligned.h>
 #include <linux/bits.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
@@ -1332,6 +1333,18 @@ static void smart_charge_sysfs_remove_group(struct device *dev)
 }
 
 /*
+ * The records follow one another with no padding, so a spec is not aligned
+ * for its pointer member: read its fields one by one rather than through a
+ * struct pointer.
+ */
+static u32 smart_charge_spec_step_size(const char *buf, size_t offset)
+{
+	return get_unaligned((const u32 *)(buf + offset +
+					   offsetof(struct smart_batt_spec,
+						    step_size)));
+}
+
+/*
  * smart_charge_check_baa_layout() - is every record inside the blob?
  * @hdr: the header, at the head of the buffer it describes
  *
@@ -1366,19 +1379,18 @@ static int smart_charge_check_baa_layout(const struct smart_basp_header *hdr)
 	n = (size_t)hdr->wired_ffc_size + hdr->wired_normal_size +
 	    hdr->wls_ffc_size + hdr->wls_normal_size;
 	while (n--) {
-		const struct smart_batt_spec *spec;
+		u32 step_size;
 
 		if (total_len - off < offsetof(struct smart_batt_spec, steps))
 			return -EINVAL;
-		spec = (const struct smart_batt_spec *)((const char *)hdr + off);
+		step_size = smart_charge_spec_step_size((const char *)hdr, off);
 		off += offsetof(struct smart_batt_spec, steps);
 
-		if (spec->step_size > SMART_BATT_SPEC_MAX_STEPS ||
-		    spec->step_size > (total_len - off) /
-				      sizeof(struct smart_batt_spec_curve))
+		if (step_size > SMART_BATT_SPEC_MAX_STEPS ||
+		    step_size > (total_len - off) /
+				sizeof(struct smart_batt_spec_curve))
 			return -EINVAL;
-		off += (size_t)spec->step_size *
-		       sizeof(struct smart_batt_spec_curve);
+		off += (size_t)step_size * sizeof(struct smart_batt_spec_curve);
 	}
 
 	return 0;
@@ -1386,11 +1398,9 @@ static int smart_charge_check_baa_layout(const struct smart_basp_header *hdr)
 
 static size_t smart_charge_spec_len(const char *buf, size_t offset)
 {
-	const struct smart_batt_spec *spec =
-		(const struct smart_batt_spec *)(buf + offset);
-
 	return offsetof(struct smart_batt_spec, steps) +
-	       spec->step_size * sizeof(struct smart_batt_spec_curve);
+	       (size_t)smart_charge_spec_step_size(buf, offset) *
+	       sizeof(struct smart_batt_spec_curve);
 }
 
 /* Hand the new jeita terms and charging curves to the strategies. */
