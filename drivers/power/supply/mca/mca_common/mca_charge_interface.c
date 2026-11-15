@@ -160,6 +160,13 @@ static void mca_charge_if_set_charging_enabled(bool enabled)
 	mutex_unlock(&g_mca_charging_lock);
 }
 
+/* Whether charging_enabled leaves charging on. */
+bool mca_charge_if_charging_enabled(void)
+{
+	return READ_ONCE(g_mca_charging_enabled);
+}
+EXPORT_SYMBOL(mca_charge_if_charging_enabled);
+
 /*
  * Whether any charging path has its input suspended.  Each path answers in
  * the form "eff_client:<client> <0|1>", and only the final digit counts.

@@ -79,5 +79,6 @@ struct mca_charge_if_ops {
 };
 
 int mca_charge_if_ops_register(struct mca_charge_if_ops *ops);
+bool mca_charge_if_charging_enabled(void);
 
 #endif /* __MCA_CHARGE_INTERFACE_H */

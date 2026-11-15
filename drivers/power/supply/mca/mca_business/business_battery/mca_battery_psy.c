@@ -32,6 +32,7 @@
 #include <linux/power_supply.h>
 #include <linux/thermal.h>
 #include <linux/version.h>
+#include <mca/common/mca_charge_interface.h>
 #include <mca/common/mca_log.h>
 #include <mca/platform/platform_buckchg_class.h>
 #include <mca/strategy/strategy_fg_class.h>
@@ -219,6 +220,8 @@ static int batt_psy_get_prop(struct power_supply *psy,
 			uisoc = strategy_class_fg_ops_get_soc();
 			if (uisoc == 100 && charging_done)
 				pval->intval = POWER_SUPPLY_STATUS_FULL;
+			else if (!mca_charge_if_charging_enabled())
+				pval->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
 			else
 				pval->intval = POWER_SUPPLY_STATUS_CHARGING;
 
@@ -228,6 +231,8 @@ static int batt_psy_get_prop(struct power_supply *psy,
 				uisoc = strategy_class_fg_ops_get_soc();
 				if (uisoc == 100 && charging_done)
 					pval->intval = POWER_SUPPLY_STATUS_FULL;
+				else if (!mca_charge_if_charging_enabled())
+					pval->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
 				else
 					pval->intval = POWER_SUPPLY_STATUS_CHARGING;
 			} else {
