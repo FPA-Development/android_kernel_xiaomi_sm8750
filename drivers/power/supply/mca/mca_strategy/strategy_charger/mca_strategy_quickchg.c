@@ -4748,7 +4748,7 @@ static int strategy_quickchg_smartchg_update_baa_para(void *data, char *baa_para
 	struct mca_quick_charge_info *info = data;
 	struct mca_quick_charge_batt_para_info *batt_para;
 	struct smart_batt_spec_curve curve[SMART_BATT_SPEC_MAX_STEPS];
-	struct smart_batt_spec *spec;
+	struct smart_batt_spec spec;
 	int offset = 0;
 	int i, idx;
 
@@ -4757,29 +4757,33 @@ static int strategy_quickchg_smartchg_update_baa_para(void *data, char *baa_para
 		return -1;
 	}
 
+	/*
+	 * The blob is shared with userspace, so each record is copied out
+	 * before it is checked and used, and nothing is written back to it.
+	 */
 	batt_para = &info->batt_para[FG_IC_MASTER];
 	for (i = 0; i < ffc_size + normal_size; i++) {
-		spec = (struct smart_batt_spec *)(baa_para + offset);
+		memcpy(&spec, baa_para + offset, offsetof(struct smart_batt_spec, steps));
 		offset += offsetof(struct smart_batt_spec, steps);
-		if (spec->step_size > SMART_BATT_SPEC_MAX_STEPS) {
-			mca_log_err("step_size: %d is invalid\n", spec->step_size);
+		if (spec.step_size > SMART_BATT_SPEC_MAX_STEPS) {
+			mca_log_err("step_size: %d is invalid\n", spec.step_size);
 			return -1;
 		}
 
 		memset(curve, 0, sizeof(curve));
-		memcpy(curve, baa_para + offset, spec->step_size * sizeof(*curve));
-		spec->steps = curve;
-		offset += spec->step_size * sizeof(*curve);
+		memcpy(curve, baa_para + offset, spec.step_size * sizeof(*curve));
+		spec.steps = curve;
+		offset += spec.step_size * sizeof(*curve);
 
-		idx = spec->t_range.idx;
+		idx = spec.t_range.idx;
 		if (idx < 0 || idx >= batt_para->temp_para_size) {
 			mca_log_err("temp_para_size: %d, temp_range.idx: %d is invalid\n",
-				idx >= batt_para->temp_para_size, idx);
+				batt_para->temp_para_size, idx);
 			continue;
 		}
 
 		(void)strategy_quickchg_smartchg_baa_update_volt_info(&batt_para->temp_info[idx],
-			spec);
+			&spec);
 	}
 
 	return 0;

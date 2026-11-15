@@ -405,7 +405,7 @@ static int mca_wireless_quick_charge_smartchg_baa_update_volt_info(
 static int mca_wireless_quick_charge_smartchg_update_baa_para(void *data, char *baa_para, int ffc_size, int normal_size)
 {
 	struct mca_wireless_quick_charge_info *info = (struct mca_wireless_quick_charge_info *)data;
-	struct smart_batt_spec *pbatt_spec = NULL;
+	struct smart_batt_spec batt_spec;
 	struct smart_batt_spec_curve curve[MCA_QUICK_CHARGE_MAX_VOLT_STEP_SIZE] = {0};
 	int offset = 0;
 
@@ -414,26 +414,29 @@ static int mca_wireless_quick_charge_smartchg_update_baa_para(void *data, char *
 		return -1;
 	}
 
+	/*
+	 * The blob is shared with userspace, so each record is copied out
+	 * before it is checked and used, and nothing is written back to it.
+	 */
 	for (int i = 0; i < ffc_size + normal_size; i++) {
-		pbatt_spec = (struct smart_batt_spec *)(baa_para + offset);
+		memcpy(&batt_spec, baa_para + offset, offsetof(struct smart_batt_spec, steps));
 		offset += offsetof(struct smart_batt_spec, steps);
-		if (pbatt_spec->step_size < 0 ||
-		    pbatt_spec->step_size > MCA_QUICK_CHARGE_MAX_VOLT_STEP_SIZE) {
-			mca_log_err("step_size %d is invalid\n", pbatt_spec->step_size);
+		if (batt_spec.step_size > MCA_QUICK_CHARGE_MAX_VOLT_STEP_SIZE) {
+			mca_log_err("step_size %d is invalid\n", batt_spec.step_size);
 			return -1;
 		}
 
 		memset(curve, 0, sizeof(curve));
-		memcpy(curve, baa_para + offset, pbatt_spec->step_size * sizeof(struct smart_batt_spec_curve));
-		pbatt_spec->steps = curve;
-		offset += pbatt_spec->step_size * sizeof(struct smart_batt_spec_curve);
+		memcpy(curve, baa_para + offset, batt_spec.step_size * sizeof(struct smart_batt_spec_curve));
+		batt_spec.steps = curve;
+		offset += batt_spec.step_size * sizeof(struct smart_batt_spec_curve);
 
-		if (pbatt_spec->t_range.idx < 0 || pbatt_spec->t_range.idx >= info->batt_para[FG_IC_MASTER].temp_para_size) {
+		if (batt_spec.t_range.idx < 0 || batt_spec.t_range.idx >= info->batt_para[FG_IC_MASTER].temp_para_size) {
 			mca_log_err("temp_para_size: %d, temp_range.idx: %d is invalid\n",
-				pbatt_spec->t_range.idx >= info->batt_para[FG_IC_MASTER].temp_para_size, pbatt_spec->t_range.idx);
+				info->batt_para[FG_IC_MASTER].temp_para_size, batt_spec.t_range.idx);
 		} else {
 			mca_wireless_quick_charge_smartchg_baa_update_volt_info(
-				&(info->batt_para[FG_IC_MASTER].temp_info[pbatt_spec->t_range.idx]), pbatt_spec);
+				&(info->batt_para[FG_IC_MASTER].temp_info[batt_spec.t_range.idx]), &batt_spec);
 		}
 	}
 
