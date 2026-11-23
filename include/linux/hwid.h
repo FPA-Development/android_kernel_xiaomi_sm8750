@@ -16,6 +16,7 @@
 #define HARDWARE_PROJECT_UNKNOWN	0
 #define HARDWARE_PROJECT_O2		1
 #define HARDWARE_PROJECT_O3		2
+#define HARDWARE_PROJECT_P11		11
 
 /* Sales region, as returned by get_hw_country_version(). */
 enum hw_country {
