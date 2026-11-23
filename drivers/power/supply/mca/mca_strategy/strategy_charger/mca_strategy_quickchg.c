@@ -267,6 +267,13 @@ static int mca_quick_charge_req_adp_volt_and_cur(struct mca_quick_charge_info *i
 		proc->cur_adp_volt = min(proc->cur_adp_volt, info->eu_vbus_max);
 		mca_log_err("eu pps %d, cur req adp volt=%d, cur=%d\n",
 			info->is_eu_model, proc->cur_adp_volt, proc->cur_adp_cur);
+	} else if (proc->adp_type == XM_CHARGER_TYPE_PPS &&
+		   info->support_third_pps_power &&
+		   info->third_pps_vbus_max && info->third_pps_ibus_max) {
+		proc->cur_adp_cur = min(proc->cur_adp_cur, info->third_pps_ibus_max);
+		proc->cur_adp_volt = min(proc->cur_adp_volt, info->third_pps_vbus_max);
+		mca_log_info("third pps, cur req adp volt=%d, cur=%d\n",
+			proc->cur_adp_volt, proc->cur_adp_cur);
 	}
 
 	if (proc->cur_adp_volt < proc->min_adp_volt) {
@@ -540,7 +547,8 @@ static int mca_quick_charge_adjust_adapter_mode(struct mca_quick_charge_info *in
 
 		if (pcap->max_voltage >= (18000 << series) &&
 		    pcap->min_voltage <= (12000 << series) &&
-		    (proc->adp_type == XM_CHARGER_TYPE_PD_VERIFY || info->is_eu_model)) {
+		    (proc->adp_type == XM_CHARGER_TYPE_PD_VERIFY ||
+		     info->is_eu_model || info->effective_on_p_generation)) {
 			mode |= MCA_QUICK_CHG_MODE_DIV_4;
 			proc->adp_info[i].adp_mode = MCA_QUICK_CHG_MODE_DIV_4;
 			power = pcap->max_current * min(pcap->max_voltage, 21000) / 1000;
@@ -3989,6 +3997,33 @@ static int mca_quick_charge_parse_dt(struct mca_quick_charge_info *info)
 		MCA_QUICK_CHG_USE_BUCK_FCC_TH_DEFAULT);
 	(void)mca_parse_dts_u32(node, "third_pps_ibat_limit", &info->third_pps_ibat_limit,
 		MCA_QUICK_CHG_THIRD_PPS_IBAT_LIMIT_DEFAULT);
+	info->support_third_pps_power = of_property_read_bool(node, "support-third-pps-power");
+	(void)mca_parse_dts_u32(node, "effective-on-p-generation",
+		&info->effective_on_p_generation, 0);
+	if (info->support_third_pps_power) {
+		struct mca_hwid_info *hwid_info = mca_get_hwid_info();
+		u32 country = hwid_info ? hwid_info->country_version : CountryCN;
+
+		if (country == CountryCN) {
+			(void)mca_parse_dts_u32(node, "third_pps_vbus_max",
+				&info->third_pps_vbus_max, 0);
+			(void)mca_parse_dts_u32(node, "third_pps_ibus_max",
+				&info->third_pps_ibus_max, 0);
+			mca_log_info("Country_version is %u, third_pps_vbus_max is %d, third_pps_ibus_max is %d, third_pps_ibat_limit is %d\n",
+				country, info->third_pps_vbus_max, info->third_pps_ibus_max,
+				info->third_pps_ibat_limit);
+		} else {
+			(void)mca_parse_dts_u32(node, "gl_third_pps_vbus_max",
+				&info->third_pps_vbus_max, 0);
+			(void)mca_parse_dts_u32(node, "gl_third_pps_ibus_max",
+				&info->third_pps_ibus_max, 0);
+			(void)mca_parse_dts_u32(node, "gl_third_pps_ibat_limit",
+				&info->third_pps_ibat_limit, info->third_pps_ibat_limit);
+			mca_log_info("Country_version is %u, gl_third_pps_vbus_max is %d, gl_third_pps_ibus_max is %d, third_pps_ibat_limit is %d\n",
+				country, info->third_pps_vbus_max, info->third_pps_ibus_max,
+				info->third_pps_ibat_limit);
+		}
+	}
 	info->support_eu_power = of_property_read_bool(node, "support-eu-power");
 	(void)mca_parse_dts_u32(node, "eu-vbus-max", &info->eu_vbus_max, 0);
 	(void)mca_parse_dts_u32(node, "eu-ibus-max", &info->eu_ibus_max, 0);

@@ -596,6 +596,10 @@ struct mca_quick_charge_info {
 	int last_override_vterm;
 	int vterm_count;
 	int third_pps_ibat_limit;
+	bool support_third_pps_power;
+	int third_pps_vbus_max;
+	int third_pps_ibus_max;
+	int effective_on_p_generation;
 	bool support_eu_power;
 	int eu_vbus_max;
 	int eu_ibus_max;
