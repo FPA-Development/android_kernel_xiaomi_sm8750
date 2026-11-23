@@ -59,6 +59,10 @@
 
 #define FP_ULTRA_QCOM
 
+#ifdef CONFIG_ULTRA_FINGERPRINT_P11
+#define FP_ULTRA_QCOM_P11
+#endif
+
 #include "fp_ultra.h"
 
 
@@ -85,7 +89,9 @@ enum fp_cdev_minor {
 	MINOR_NUM_MIFP = 0,
 	MINOR_NUM_MIFP_ID = 1,
 	MINOR_NUM_IPC = 2,
+#ifndef FP_ULTRA_QCOM_P11
 	MINOR_NUM_FD = 3,
+#endif
 };
 
 typedef enum fp_key_event {
@@ -148,20 +154,26 @@ struct fp_ioc_chip_info {
 
 #define FP_IOC_MAXNR    		 19	/* THIS MACRO IS NOT USED NOW... */
 
+#ifndef FP_ULTRA_QCOM_P11
 #define QBT_IS_WUHB_CONNECTED	 _IO(FP_IOC_MAGIC, 20)
+#endif
 #define QBT_SEND_KEY_EVENT	 _IO(FP_IOC_MAGIC, 21)
 #define QBT_ENABLE_IPC	 _IO(FP_IOC_MAGIC, 22)
 #define QBT_DISABLE_IPC	 _IO(FP_IOC_MAGIC, 23)
+#ifndef FP_ULTRA_QCOM_P11
 #define QBT_ENABLE_FD	 _IO(FP_IOC_MAGIC, 24)
 #define QBT_DISABLE_FD	 _IO(FP_IOC_MAGIC, 25)
+#endif
 #define QBT_CONFIGURE_TOUCH_FD	 _IO(FP_IOC_MAGIC, 26)
 #define QBT_ACQUIRE_WAKELOCK	 _IO(FP_IOC_MAGIC, 27)
 #define QBT_RELEASE_WAKELOCK	 _IO(FP_IOC_MAGIC, 28)
 
 #define FP_IOC_REQUEST_IPC           _IO(FP_IOC_MAGIC, 32)
 #define FP_IOC_FREE_IPC              _IO(FP_IOC_MAGIC, 33)
+#ifndef FP_ULTRA_QCOM_P11
 #define FP_IOC_REQUEST_WUHB          _IO(FP_IOC_MAGIC, 34)
 #define FP_IOC_FREE_WUHB             _IO(FP_IOC_MAGIC, 35)
+#endif
 #define FP_IOC_DISABLE_INTR2         _IO(FP_IOC_MAGIC, 36)
 #define FP_IOC_REQUEST_RESOURCE      _IO(FP_IOC_MAGIC, 37)
 #define FP_IOC_RELEASE_RESOURCE      _IO(FP_IOC_MAGIC, 38)
@@ -171,6 +183,7 @@ struct fp_ioc_chip_info {
 #define FP_IOC_REGULATOR_ENABLE_PWM     _IO(FP_IOC_MAGIC, 42)
 #define FP_IOC_REGULATOR_DISABLE_PWM    _IO(FP_IOC_MAGIC, 43)
 #define FP_IOC_RESET_TIME_MS            _IOW(FP_IOC_MAGIC, 44, uint32_t)
+#define FP_IOC_INTR2_SIDE_CONFIG        _IOR(FP_IOC_MAGIC, 45, uint32_t)
 
 
 #define DRIVER_COMPATIBLE "xiaomi,xiaomi-fp"
@@ -221,6 +234,10 @@ struct fp_device {
 	u_int32_t rst_high_delay;
 	u_int32_t rst_low_delay;
 	u_int32_t rst_pull_flag[5];
+	u_int32_t intr2_side_config;
+#ifdef FP_ULTRA_QCOM_P11
+	bool reset_pin_enable;
+#endif
 /**************************Pin******************************/
 	signed irq_gpio;
 	int irq_num;
@@ -230,8 +247,13 @@ struct fp_device {
 	struct fp_vreg vreg_1v8;
 	struct fp_vreg vreg_gpio;
 	struct pinctrl *pinctrl;
+#ifdef FP_ULTRA_QCOM_P11
+	struct pinctrl_state *pins_int_default;
+	struct pinctrl_state *pins_int_pulldown;
+#else
 	struct pinctrl_state *pins_eint_default;
 	struct pinctrl_state *pins_eint_pulldown;
+#endif
 	struct pinctrl_state *pins_spiio_spi_mode;
 	struct pinctrl_state *pins_spiio_gpio_mode;
 	struct pinctrl_state *pins_reset_high;
@@ -241,6 +263,20 @@ struct fp_device {
 /**************************CONFIG_MTK_PLATFORM******************************/
 /**************************CONFIG_MTK_PLATFORM******************************/
 /**************************CONFIG_QCOM_ULTRA******************************/
+#ifdef FP_ULTRA_QCOM_P11
+	atomic_t	ipc_available;
+	atomic_t    wakelock_acquired;
+	struct fw_ipc_info	fw_ipc;
+	bool intr2_enable;
+	uint32_t intr2_gpio;
+	struct cdev qbt_ipc_cdev;
+	struct mutex	mutex;
+	struct mutex	ipc_events_mutex;
+	spinlock_t	intr2_events_lock;
+	DECLARE_KFIFO(ipc_events, struct ipc_event, MAX_FW_EVENTS);
+	wait_queue_head_t read_wait_queue_ipc;
+	struct fp_position position;
+#else
 	atomic_t	fd_available;
 	atomic_t	ipc_available;
 	atomic_t    wakelock_acquired;
@@ -260,6 +296,7 @@ struct fp_device {
 	struct fd_userspace_buf scrath_buf;
 	struct fp_position position;
 	struct work_struct intr2_work;
+#endif
 /**************************CONFIG_QCOM_ULTRA******************************/
 };
 /**********************function defination**********************/

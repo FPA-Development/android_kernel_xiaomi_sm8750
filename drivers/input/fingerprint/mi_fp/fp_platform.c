@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "fp_driver.h"
+#include <linux/hwid.h>
 
 /* -------------------------------------------------------------------- */
 /* fingerprint chip hardware configuration				*/
@@ -12,24 +13,58 @@
 #define DTS_VENDOR_NAME             "xiaomi,vendor_names"
 #define DTS_PINCTL_RESET_HIGH       "reset_high"
 #define DTS_PINCTL_RESET_LOW        "reset_low"
+#ifndef FP_ULTRA_QCOM_P11
 #define DTS_RST_PULL_FLAG           "reset-flag"
+#else
+#define DTS_PINCTL_IRQ_DEFAULT      "irq_default"
+#define DTS_PINCTL_IRQ_PULLDOWN     "irq_pulldown"
+#define DTS_RESET_PIN_ENABLE_FLAG   "reset-pin-enable"
+#define DTS_RESET_PULL_FLAG         "reset-flag"
+#define DTS_INTR2_ENABLE_FLAG       "intr2-enable"
+#define DTS_INTR2_SIDE_CONFIG       "intr2-side-config"
+#endif
+
+#define HW_LEVEL_P01                1
+#define HW_LEVEL_MASK               0XFF0F000F
 
 int fp_parse_dts(struct fp_device *fp_dev)
 {
 	int ret;
+	uint32_t platform_id, hw_level;
 	struct device_node *node = fp_dev->driver_device->dev.of_node;
 	FUNC_ENTRY();
 	if (node) {
+#ifdef FP_ULTRA_QCOM_P11
+		/* get fingerprint pinctrl config */
+		fp_dev->pinctrl = devm_pinctrl_get(&fp_dev->driver_device->dev);
+		if (IS_ERR(fp_dev->pinctrl)) {
+			ret = PTR_ERR(fp_dev->pinctrl);
+			pr_debug("can't find fingerprint pinctrl\n");
+		}
+#endif
 
 		/* get irq resource */
 		fp_dev->irq_gpio = of_get_named_gpio(node, DTS_IRQ_GPIO, 0);
 		pr_debug("fp::irq_gpio:%d\n", fp_dev->irq_gpio);
 		if (!gpio_is_valid(fp_dev->irq_gpio)) {
-			pr_debug("IRQ GPIO is invalid.\n");
+			pr_err("IRQ GPIO is invalid.\n");
 			return -EPERM;
 		}
 		fp_dev->irq_num = gpio_to_irq(fp_dev->irq_gpio);
 
+#ifdef FP_ULTRA_QCOM_P11
+		if (!IS_ERR_OR_NULL(fp_dev->pinctrl)) {
+			fp_dev->pins_int_default =
+				pinctrl_lookup_state(fp_dev->pinctrl, DTS_PINCTL_IRQ_DEFAULT);
+			if (IS_ERR(fp_dev->pins_int_default))
+				pr_debug("can't find pinctrl irq_default\n");
+
+			fp_dev->pins_int_pulldown =
+				pinctrl_lookup_state(fp_dev->pinctrl, DTS_PINCTL_IRQ_PULLDOWN);
+			if (IS_ERR(fp_dev->pins_int_pulldown))
+				pr_debug("can't find pinctrl irq_pulldown\n");
+		}
+#else
 		/* get reset pin info */
 		ret = of_property_read_u32(node, DTS_RST_HIGH_TIME, &fp_dev->rst_high_delay);
 		if (ret != 0 || fp_dev->rst_high_delay == 0) {
@@ -40,6 +75,7 @@ int fp_parse_dts(struct fp_device *fp_dev)
 			fp_dev->rst_low_delay = FP_RESET_DEFAULT_TIME;
 		}
 		pr_debug("rst_high_delay = %u, rst_low_delay = %u\n", fp_dev->rst_high_delay, fp_dev->rst_low_delay);
+#endif
 
 		/* get netlink-event */
 		of_property_read_u32(node, DTS_NETLINK_NUM, &fp_dev->fp_netlink_num);
@@ -48,6 +84,30 @@ int fp_parse_dts(struct fp_device *fp_dev)
 		of_property_read_string(node, DTS_VENDOR_NAME, &fp_dev->vendor_names);
 		pr_debug("netlink_num = %d, vendor_names = %s\n", fp_dev->fp_netlink_num, fp_dev->vendor_names);
 
+#ifdef FP_ULTRA_QCOM_P11
+		/* get intr2 enable status and get intr2 resource */
+		if (of_property_read_bool(node, DTS_INTR2_ENABLE_FLAG)) {
+			if (of_find_property(node, DTS_INTR2_SIDE_CONFIG, NULL)) {
+				const char *str = NULL;
+				if (!of_property_read_string(node, DTS_INTR2_SIDE_CONFIG, &str) && str) {
+					if (strcmp(str, "AP") == 0) {
+						fp_dev->intr2_side_config = 1;
+						pr_debug("intr2 AP is enable.\n");
+					} else if (strcmp(str, "TIC") == 0) {
+						fp_dev->intr2_side_config = 2;
+						pr_debug("intr2 TIC is enable.\n");
+					} else {
+						fp_dev->intr2_side_config = 0;
+						pr_debug("intr2 is not config\n");
+					}
+				}
+			} else {
+				pr_debug("INTR2 is not set.\n");
+			}
+		} else {
+			pr_debug("INTR2 is not enable.\n");
+		}
+#endif
 
 		/* get ipc resourece */
 		fp_dev->fw_ipc.gpio = of_get_named_gpio(node, DTS_IPC_GPIO, 0);
@@ -58,35 +118,38 @@ int fp_parse_dts(struct fp_device *fp_dev)
 		}
 		fp_dev->fw_ipc.irq = gpio_to_irq(fp_dev->fw_ipc.gpio);
 
+#ifndef FP_ULTRA_QCOM_P11
 		/* get intr2 resourece*/
 		fp_dev->intr2_gpio = of_get_named_gpio(node, DTS_INTR2_GPIO, 0);
 		if (!gpio_is_valid(fp_dev->intr2_gpio))
 			pr_debug("intr2 gpio not found, gpio=%d\n", fp_dev->intr2_gpio);
 
 		of_property_read_u32_array(node, SENSORLOCATION, fp_dev->position.location, 4);
-		/*get wuhb resourece */
-		/*fp_dev->fd_gpio.gpio = of_get_named_gpio(node, DTS_WUHB_GPIO, 0);
-		pr_debug( "fp::fd_gpio:%d\n", fp_dev->fd_gpio.gpio);
-		if (!gpio_is_valid(fp_dev->fd_gpio.gpio)) {
-			fp_dev->is_wuhb_connected = 0;
-			pr_debug("FD GPIO is invalid.\n");
-			return -EPERM;
-		}
-		fp_dev->is_wuhb_connected = 1;
-		fp_dev->fd_gpio.active_low = FD_GPIO_ACTIVE_LOW;
-		pr_debug("is_wuhb_connected=%d\n", fp_dev->is_wuhb_connected);*/
-
 		atomic_set(&fp_dev->fd_available, 1);
+#endif
 		atomic_set(&fp_dev->ipc_available, 1);
 		atomic_set(&fp_dev->wakelock_acquired, 0);
 
 		mutex_init(&fp_dev->mutex);
+#ifndef FP_ULTRA_QCOM_P11
 		mutex_init(&fp_dev->fd_events_mutex);
+#endif
 		mutex_init(&fp_dev->ipc_events_mutex);
+#ifndef FP_ULTRA_QCOM_P11
 		fp_dev->fd_gpio.work_init = false;
+#endif
 		fp_dev->fw_ipc.work_init = false;
 
-		fp_dev->vreg_3v3.mRegulator = regulator_get(&fp_dev->driver_device->dev, DTS_VOlT_REGULATER_3V3);
+		platform_id = get_hw_version_platform();
+		hw_level = (((get_hw_id_value() & HW_LEVEL_MASK) >> 16) & 0xF) * 10
+			+ (((get_hw_id_value() & HW_LEVEL_MASK) >> 0) & 0xF);
+
+		if (platform_id == HARDWARE_PROJECT_P11 && hw_level == HW_LEVEL_P01) {
+			fp_dev->vreg_3v3.mRegulator = regulator_get(&fp_dev->driver_device->dev, DTS_VOlT_REGULATER_3V1);
+			pr_debug("p11 fp voltage is P01 L9B\n");
+		} else {
+			fp_dev->vreg_3v3.mRegulator = regulator_get(&fp_dev->driver_device->dev, DTS_VOlT_REGULATER_3V3);
+		}
 		fp_dev->vreg_1v8.mRegulator = regulator_get(&fp_dev->driver_device->dev, DTS_VOlT_REGULATER_1V8);
 		fp_dev->vreg_gpio.mPwrGpio = of_get_named_gpio(node, DTS_VOlT_REGULATER_GPIO, 0);
 	} else {
@@ -94,6 +157,49 @@ int fp_parse_dts(struct fp_device *fp_dev)
 			return -EPERM;
 	}
 
+#ifdef FP_ULTRA_QCOM_P11
+	/* get reset pin enable status and get reset pin resource */
+	if (of_property_read_bool(node, DTS_RESET_PIN_ENABLE_FLAG)) {
+		of_property_read_u32_array(node, DTS_RESET_PULL_FLAG, fp_dev->rst_pull_flag, 5);
+		pr_debug("rst_pull_flag = %d %d %d %d %d\n",
+			fp_dev->rst_pull_flag[0], fp_dev->rst_pull_flag[1], fp_dev->rst_pull_flag[2],
+			fp_dev->rst_pull_flag[3], fp_dev->rst_pull_flag[4]);
+
+		ret = of_property_read_u32(node, DTS_RST_HIGH_TIME, &fp_dev->rst_high_delay);
+		if (ret != 0 || fp_dev->rst_high_delay == 0)
+			fp_dev->rst_high_delay = FP_RESET_DEFAULT_TIME;
+
+		ret = of_property_read_u32(node, DTS_RST_LOW_TIME, &fp_dev->rst_low_delay);
+		if (ret != 0 || fp_dev->rst_low_delay == 0)
+			fp_dev->rst_low_delay = FP_RESET_DEFAULT_TIME;
+
+		pr_debug("reset-pin is enable.\n");
+		fp_dev->reset_pin_enable = true;
+
+		if (!IS_ERR_OR_NULL(fp_dev->pinctrl)) {
+			fp_dev->pins_reset_high =
+				pinctrl_lookup_state(fp_dev->pinctrl, DTS_PINCTL_RESET_HIGH);
+			if (IS_ERR(fp_dev->pins_reset_high)) {
+				pr_debug("can't find pinctrl reset_high\n");
+				fp_dev->reset_pin_enable = false;
+			}
+
+			fp_dev->pins_reset_low =
+				pinctrl_lookup_state(fp_dev->pinctrl, DTS_PINCTL_RESET_LOW);
+			if (IS_ERR(fp_dev->pins_reset_low)) {
+				pr_debug("can't find pinctrl reset_low\n");
+				fp_dev->reset_pin_enable = false;
+			} else {
+				pinctrl_select_state(fp_dev->pinctrl, fp_dev->pins_reset_low);
+			}
+		}
+	} else {
+		pr_debug("reset-pin is not enable.\n");
+	}
+
+	pr_debug("irq_num = %d, rst_high_delay = %u, rst_low_delay = %u\n",
+		fp_dev->irq_num, fp_dev->rst_high_delay, fp_dev->rst_low_delay);
+#else
 	if (fp_dev->driver_device) {
 
 		fp_dev->pinctrl = devm_pinctrl_get(&fp_dev->driver_device->dev);
@@ -126,6 +232,7 @@ int fp_parse_dts(struct fp_device *fp_dev)
 		pr_debug("platform device is null\n");
 		return -EPERM;
 	}
+#endif
 
 	FUNC_EXIT();
 	return 0;
@@ -155,10 +262,19 @@ int fp_power_on(struct fp_vreg *vreg)
 	if (!vreg->IsGpio) {
 		if (vreg->mRegulator != NULL) {
 			if (!vreg->enable) {
-
 				status = regulator_enable(vreg->mRegulator);
 				mdelay(1);
 				status = regulator_get_voltage(vreg->mRegulator);
+#ifdef FP_ULTRA_QCOM_P11
+				pr_debug("power on Ldo regulator value is %d!!\n", status);
+				if (status == 3100000) {
+					regulator_set_voltage(vreg->mRegulator, 3300000, 3300000);
+					mdelay(1);
+					status = regulator_enable(vreg->mRegulator);
+					mdelay(1);
+					status = regulator_get_voltage(vreg->mRegulator);
+				}
+#endif
 				vreg->enable = true;
 				pr_debug("power on Ldo regulator value is %d!!\n", status);
 			} else {

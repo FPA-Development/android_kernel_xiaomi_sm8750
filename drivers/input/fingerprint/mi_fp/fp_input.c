@@ -8,6 +8,7 @@
 
 static struct fp_device *fp_dev;
 
+#ifndef FP_ULTRA_QCOM_P11
 static void fp_intr2_work_func(struct work_struct *work)
 {
 	/* fp_local_time_printk("intr2 operation:SLOT_MAP: %d, GPIO:%d,", fp_dev->position.SLOT_MAP, gpio_get_value(fp_dev->intr2_gpio));*/
@@ -46,6 +47,7 @@ static void xiaomifp_intr2_operation(int SLOT_CUR, int code)
 		schedule_work(&fp_dev->intr2_work);
 	}
 }
+#endif
 
 static void xiaomifp_input_event(struct input_handle *handle,
 		unsigned int type, unsigned int code, int value)
@@ -65,9 +67,11 @@ static void xiaomifp_input_event(struct input_handle *handle,
 			}
 		}
 	}
+#ifndef FP_ULTRA_QCOM_P11
 	if (fp_dev->position.enable && ((code == ABS_MT_TRACKING_ID) || (code == SYN_REPORT))) {
 		xiaomifp_intr2_operation(fp_dev->position.SLOT_CUR, code);
 	}
+#endif
 }
 
 static int xiaomifp_input_connect(struct input_handler *handler,
@@ -155,7 +159,9 @@ int xiaomifp_evdev_init(struct fp_device *_fp_dev)
 	memset(fp_dev->position.TRACKING_ID, 0, sizeof(int) * 32);
 	memset(fp_dev->position.touch_x, 0, sizeof(int) * 32);
 	memset(fp_dev->position.touch_y, 0, sizeof(int) * 32);
+#ifndef FP_ULTRA_QCOM_P11
 	INIT_WORK(&fp_dev->intr2_work, fp_intr2_work_func);
+#endif
 	pr_debug("sensorLocation:%d,%d,%d,%d\n",fp_dev->position.x1, fp_dev->position.y1, fp_dev->position.x2, fp_dev->position.y2);
 	return ret;
 }
@@ -163,6 +169,8 @@ int xiaomifp_evdev_init(struct fp_device *_fp_dev)
 void xiaomifp_evdev_remove(void)
 {
 	input_unregister_handler(&xiaomifp_input_handler);
+#ifndef FP_ULTRA_QCOM_P11
 	gpio_free(fp_dev->intr2_gpio);
+#endif
 	fp_dev->position.reqIntr2 = 0;
 }

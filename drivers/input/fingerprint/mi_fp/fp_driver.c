@@ -134,11 +134,15 @@ static int get_events_fifo_len_locked(
 		struct fp_device *fp_dev, int minor_no)
 {
 	int len = 0;
+#ifndef FP_ULTRA_QCOM_P11
 	if (minor_no == MINOR_NUM_FD) {
 		mutex_lock(&fp_dev->fd_events_mutex);
 		len = kfifo_len(&fp_dev->fd_events);
 		mutex_unlock(&fp_dev->fd_events_mutex);
 	} else if (minor_no == MINOR_NUM_IPC) {
+#else
+	if (minor_no == MINOR_NUM_IPC) {
+#endif
 		mutex_lock(&fp_dev->ipc_events_mutex);
 		len = kfifo_len(&fp_dev->ipc_events);
 		mutex_unlock(&fp_dev->ipc_events_mutex);
@@ -279,6 +283,7 @@ static void free_ipc_irq(struct fp_device *fp_dev)
 	}
 }
 
+#ifndef FP_ULTRA_QCOM_P11
 static void qbt_fd_report_event(struct fp_device *fp_dev,
 		struct fd_event *event)
 {
@@ -417,12 +422,31 @@ end:
 	pr_debug("Setup fd irq success, rc=%d\n", rc);
 	return rc;
 }
+#endif
 
 static ssize_t set_intr2_fd(struct device *dev,
 				   struct device_attribute *attr,
 				   const char *buf, size_t count)
 {
 	struct fp_device *fp_dev = &fp;
+#ifdef FP_ULTRA_QCOM_P11
+	if (fp_dev->intr2_enable) {
+		spin_lock(&fp_dev->intr2_events_lock);
+		if (!strncmp(buf, "0", strlen("0"))) {
+			fp_local_time_printk("sysfs: set intr2 low");
+			pinctrl_select_state(fp_dev->pinctrl, fp_dev->pins_reset_low);
+		} else if (!strncmp(buf, "1", strlen("1"))) {
+			fp_local_time_printk("sysfs: set intr2 high");
+			pinctrl_select_state(fp_dev->pinctrl, fp_dev->pins_reset_high);
+		} else {
+			pr_err("unknown operation set 0");
+		}
+		spin_unlock(&fp_dev->intr2_events_lock);
+	} else {
+		pr_err("intr2 is not enable");
+		return -EINVAL;
+	}
+#else
 	dev_info(fp_dev->device, "%s -> %s\n", __func__, buf);
 
 	if (!strncmp(buf, "0", strlen("0"))) {
@@ -434,6 +458,7 @@ static ssize_t set_intr2_fd(struct device *dev,
 	} else {
 		pr_err("unknown operation set 0");
 	}
+#endif
 	return count;
 }
 
@@ -441,9 +466,20 @@ static ssize_t get_intr2_fd(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct fp_device *fp_dev = &fp;
+#ifdef FP_ULTRA_QCOM_P11
+	if (fp_dev->intr2_enable) {
+		int intr2 = gpio_get_value(fp_dev->intr2_gpio);
+		pr_debug("%s -> %d\n", __func__, intr2);
+		return scnprintf(buf, PAGE_SIZE, "%i\n", intr2);
+	} else {
+		pr_err("intr2 is not enable");
+		return -EINVAL;
+	}
+#else
 	int intr2 = gpio_get_value(fp_dev->intr2_gpio);
 	pr_debug("%s -> %d\n", __func__, intr2);
 	return scnprintf(buf, PAGE_SIZE, "%i\n", intr2);
+#endif
 }
 
 static DEVICE_ATTR(intr2, S_IRUSR | S_IWUSR, get_intr2_fd, set_intr2_fd);
@@ -579,6 +615,48 @@ static long fp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			fp_disable_irq(fp_dev);
 			break;
 
+#ifdef FP_ULTRA_QCOM_P11
+		case FP_IOC_RESET:
+			pr_debug( "FP_IOC_RESET  ======\n" );
+			if (fp_dev->reset_pin_enable) {
+				fp_hw_reset(fp_dev);
+			} else {
+				retval = -EFAULT;
+				pr_err("reset pin is not init\n");
+			}
+			break;
+
+		case FP_IOC_RESET_TIME_MS:
+			pr_debug( "FP_IOC_RESET_TIME_MS  ======\n" );
+			if (fp_dev->reset_pin_enable) {
+				if (copy_from_user((u_int32_t *)rst_time, (u_int32_t *)arg, 2*sizeof(u_int32_t))) {
+					pr_info("%s: FP_IOC_RESET_TIME_MS failed.\n", __func__);
+					retval = -EFAULT;
+					break;
+				}
+				if (rst_time[0] == 0 || rst_time[1] == 0) {
+					pr_err("FP_IOC_RESET_TIME_MS: low_time or high_time is 0.\n");
+					retval = -EFAULT;
+					break;
+				} else {
+					fp_hw_reset_delay(fp_dev, rst_time[0], rst_time[1]);
+				}
+			} else {
+				retval = -EFAULT;
+				pr_err("reset pin is not init\n");
+			}
+			break;
+
+		case FP_IOC_RESET_OUT_LOW:
+			pr_debug( "FP_IOC_RESET_OUT_LOW  ======\n" );
+			if (fp_dev->reset_pin_enable) {
+				pinctrl_select_state(fp_dev->pinctrl, fp_dev->pins_reset_low);
+			} else {
+				retval = -EFAULT;
+				pr_err("reset pin is not init\n");
+			}
+			break;
+#else
 		case FP_IOC_RESET:
 			pr_debug( "FP_IOC_RESET  ======\n" );
 			fp_hw_reset(fp_dev);
@@ -604,6 +682,7 @@ static long fp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			pr_debug( "FP_IOC_RESET_OUT_LOW  ======\n" );
 			pinctrl_select_state(fp_dev->pinctrl, fp_dev->pins_reset_low);
 			break;
+#endif
 
 		case FP_IOC_ENABLE_POWER:
 			pr_debug( "FP_IOC_ENABLE_POWER ======\n" );
@@ -747,6 +826,7 @@ static long fp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			}
 			break;
 
+#ifndef FP_ULTRA_QCOM_P11
 		case FP_IOC_REQUEST_WUHB:
 			pr_debug( "FP_IOC_REQUEST_WUHB ======\n" );
 			if (!fp_dev->fd_gpio.work_init) {
@@ -768,6 +848,7 @@ static long fp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			pr_debug( "FP_IOC_FREE_WUHB ======\n" );
 			fp_dev->fd_gpio.work_init = false;
 			break;
+#endif
 
 		case QBT_ENABLE_IPC:
 			pr_debug( "QBT_ENABLE_IPC ======\n" );
@@ -786,6 +867,7 @@ static long fp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			}
 			break;
 
+#ifndef FP_ULTRA_QCOM_P11
 		case QBT_ENABLE_FD:
 			pr_debug( "QBT_ENABLE_FD ======\n" );
 			if (fp_dev->is_wuhb_connected &&
@@ -823,6 +905,7 @@ static long fp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				retval = -EFAULT;
 			}
 			break;
+#endif
 
 		case QBT_ACQUIRE_WAKELOCK:
 			pr_debug( "QBT_ACQUIRE_WAKELOCK ======\n" );
@@ -843,6 +926,30 @@ static long fp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			}
 			break;
 
+#ifdef FP_ULTRA_QCOM_P11
+		case FP_IOC_DISABLE_INTR2:
+			pr_debug( "FP_IOC_DISABLE_INTR2 ======\n" );
+			if (fp_dev->intr2_enable) {
+				disable_intr2_report(fp_dev);
+			} else {
+				retval = -EINVAL;
+				pr_err("intr2 is not init\n");
+			}
+			break;
+		case FP_IOC_REQUEST_INTR2:
+			pr_debug( "FP_IOC_REQUEST_INTR2 ======\n" );
+			if (fp_dev->intr2_enable) {
+				int rc = enable_intr2_report(fp_dev);
+				if (rc < 0) {
+					retval = -EFAULT;
+					pr_err("intr2 request fail\n");
+				}
+			} else {
+				retval = -EINVAL;
+				pr_err("intr2 is not init\n");
+			}
+			break;
+#else
 		case FP_IOC_DISABLE_INTR2:
 			pr_debug( "FP_IOC_DISABLE_INTR2 ======\n" );
 			disable_intr2_report(fp_dev);
@@ -855,6 +962,17 @@ static long fp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 					retval = -EFAULT;
 					pr_err("intr2 request fail\n");
 				}
+			}
+			break;
+#endif
+		case FP_IOC_INTR2_SIDE_CONFIG:
+			pr_debug( "FP_IOC_INTR2_SIDE_CONFIG ======\n" );
+			pr_debug( "fp_dev->intr2_side_config = %d\n", fp_dev->intr2_side_config);
+			if (copy_to_user((u_int32_t __user *)arg, &fp_dev->intr2_side_config,
+					 sizeof(fp_dev->intr2_side_config))) {
+				pr_debug( "FP_IOC_INTR2_SIDE_CONFIG failed!\n" );
+				retval = -EFAULT;
+				break;
 			}
 			break;
 		default:
@@ -935,7 +1053,9 @@ static int fp_open(struct inode *inode, struct file *filp)
 		filp->private_data = fp_dev;
 		status = 0;
 
+#ifndef FP_ULTRA_QCOM_P11
 		pr_debug("entry fd_available=%d\n", atomic_read(&fp_dev->fd_available));
+#endif
 
 		/* disallowing concurrent opens */
 		if (!atomic_dec_and_test(&fp_dev->ipc_available)) {
@@ -943,6 +1063,7 @@ static int fp_open(struct inode *inode, struct file *filp)
 			rc = -EBUSY;
 		}
 
+#ifndef FP_ULTRA_QCOM_P11
 		pr_debug("exit rc = %d, fd_available=%d\n",
 				rc, atomic_read(&fp_dev->fd_available));
 	}
@@ -964,6 +1085,7 @@ static int fp_open(struct inode *inode, struct file *filp)
 		}
 		pr_debug("exit rc = %d, fd_available=%d\n",
 				rc, atomic_read(&fp_dev->fd_available));
+#endif
 	}
 
 	else {
@@ -1006,6 +1128,7 @@ static int fp_release(struct inode *inode, struct file *filp)
 		pr_debug("Found MIFP_ID\n" );
 	}
 
+#ifndef FP_ULTRA_QCOM_P11
 	else if (minor_no == MINOR_NUM_IPC || minor_no == MINOR_NUM_FD) {
 		pr_debug("entry fd_available=%d\n", atomic_read(&fp_dev->fd_available));
 		if (minor_no == MINOR_NUM_FD) {
@@ -1018,13 +1141,23 @@ static int fp_release(struct inode *inode, struct file *filp)
 				free_ipc_irq(fp_dev);
 			}
 		}
+#else
+	else if (minor_no == MINOR_NUM_IPC) {
+		pr_debug("Found QBT_IPC\n");
+		atomic_inc(&fp_dev->ipc_available);
+		if (fp_dev->fw_ipc.work_init) {
+			free_ipc_irq(fp_dev);
+		}
+#endif
 
 		if (atomic_read(&fp_dev->wakelock_acquired) != 0) {
 			pr_debug("Releasing wakelock\n");
 			pm_relax(fp_dev->device);
 			atomic_set(&fp_dev->wakelock_acquired, 0);
 		}
+#ifndef FP_ULTRA_QCOM_P11
 		pr_debug("exit fd_available=%d\n", atomic_read(&fp_dev->fd_available));
+#endif
 	}
 	else {
 		pr_err("Invalid minor number %d\n", minor_no);
@@ -1038,9 +1171,11 @@ static ssize_t fp_read(struct file *filp, char __user *ubuf,
 	struct ipc_event fw_event;
 	struct fp_device *fp_dev;
 	wait_queue_head_t *read_wait_queue = NULL;
+#ifndef FP_ULTRA_QCOM_P11
 	struct fd_event *fd_evt;
 	struct fd_userspace_buf *scratch_buf;
 	int i = 0;
+#endif
 	int minor_no = -1;
 	int fifo_len = 0;
 	ssize_t num_bytes = 0;
@@ -1055,6 +1190,7 @@ static ssize_t fp_read(struct file *filp, char __user *ubuf,
 
 	pr_debug("entry with numBytes = %zd, minor_no = %d\n", cnt, minor_no);
 
+#ifndef FP_ULTRA_QCOM_P11
 	scratch_buf = &fp_dev->scrath_buf;
 	memset(scratch_buf, 0, sizeof(*scratch_buf));
 
@@ -1065,6 +1201,9 @@ static ssize_t fp_read(struct file *filp, char __user *ubuf,
 		}
 		read_wait_queue = &fp_dev->read_wait_queue_fd;
 	} else if (minor_no == MINOR_NUM_IPC) {
+#else
+	if (minor_no == MINOR_NUM_IPC) {
+#endif
 		if (cnt < sizeof(fw_event.ev)) {
 			pr_err("Num bytes to read is too small\n");
 			return -EINVAL;
@@ -1089,6 +1228,7 @@ static ssize_t fp_read(struct file *filp, char __user *ubuf,
 		fifo_len = get_events_fifo_len_locked(fp_dev, minor_no);
 	}
 
+#ifndef FP_ULTRA_QCOM_P11
 	if (minor_no == MINOR_NUM_FD) {
 		mutex_lock(&fp_dev->fd_events_mutex);
 
@@ -1115,6 +1255,9 @@ static ssize_t fp_read(struct file *filp, char __user *ubuf,
 				sizeof(*scratch_buf));
 		mutex_unlock(&fp_dev->fd_events_mutex);
 	} else if (minor_no == MINOR_NUM_IPC) {
+#else
+	if (minor_no == MINOR_NUM_IPC) {
+#endif
 		mutex_lock(&fp_dev->ipc_events_mutex);
 		if (!kfifo_get(&fp_dev->ipc_events, &fw_event))
 			pr_err("IPC events fifo: error removing item\n");
@@ -1149,11 +1292,15 @@ static __poll_t fp_poll(struct file *filp,
 
 	pr_debug("fp_read enter, minor_no = %d\n", minor_no);
 
+#ifndef FP_ULTRA_QCOM_P11
 	if (minor_no == MINOR_NUM_FD) {
 		poll_wait(filp, &fp_dev->read_wait_queue_fd, wait);
 		if (kfifo_len(&fp_dev->fd_events) > 0)
 			mask |= (POLLIN | POLLRDNORM);
 	} else if (minor_no == MINOR_NUM_IPC) {
+#else
+	if (minor_no == MINOR_NUM_IPC) {
+#endif
 		poll_wait(filp, &fp_dev->read_wait_queue_ipc, wait);
 		if (kfifo_len(&fp_dev->ipc_events) > 0)
 			mask |= (POLLIN | POLLRDNORM);
@@ -1185,6 +1332,7 @@ int fp_ultra_dev_register(void)
 	int ret = 0;
     FUNC_ENTRY();
 
+#ifndef FP_ULTRA_QCOM_P11
     /* qbt_fd_cdev init and add */
 	cdev_init(&fp_dev->qbt_fd_cdev, &fp_fops);
 	fp_dev->qbt_fd_cdev.owner = THIS_MODULE;
@@ -1194,6 +1342,7 @@ int fp_ultra_dev_register(void)
 		pr_debug( "Failed to add qbt_fd_cdev.\n" );
 		goto err_fd_cdev;
 	}
+#endif
 	/* qbt_ipc_cdev init and add */
 	cdev_init(&fp_dev->qbt_ipc_cdev, &fp_fops);
 	fp_dev->qbt_ipc_cdev.owner = THIS_MODULE;
@@ -1204,6 +1353,7 @@ int fp_ultra_dev_register(void)
 		goto err_ipc_cdev;
 	}
 
+#ifndef FP_ULTRA_QCOM_P11
 	/* create qbt_fd device */
 	device = device_create(fp_dev->class, NULL,
 			       fp_dev->qbt_fd_cdev.dev, fp_dev,
@@ -1213,6 +1363,7 @@ int fp_ultra_dev_register(void)
 		pr_err("fd device_create failed %d\n", ret);
 		goto err_fd_dev_create;
 	}
+#endif
 	/* create qbt_ipc device */
 	device = device_create(fp_dev->class, NULL,
 			       fp_dev->qbt_ipc_cdev.dev, fp_dev,
@@ -1228,15 +1379,19 @@ int fp_ultra_dev_register(void)
 	return 0;
 
 err_ipc_dev_create:
+#ifndef FP_ULTRA_QCOM_P11
 	device_destroy(fp_dev->class, fp_dev->qbt_fd_cdev.dev);
 
 err_fd_dev_create:
+#endif
 	cdev_del(&fp_dev->qbt_ipc_cdev);
 
 err_ipc_cdev:
+#ifndef FP_ULTRA_QCOM_P11
 	cdev_del(&fp_dev->qbt_fd_cdev);
 
 err_fd_cdev:
+#endif
 	pr_debug("fp_ultra_dev register failed = %d!", status);
     return status;
 }
@@ -1246,9 +1401,13 @@ void fp_ultra_dev_unregister(void)
 	struct fp_device *fp_dev = &fp;
 
 	device_destroy(fp_dev->class, fp_dev->qbt_ipc_cdev.dev);
+#ifndef FP_ULTRA_QCOM_P11
 	device_destroy(fp_dev->class, fp_dev->qbt_fd_cdev.dev);
+#endif
 	cdev_del(&fp_dev->qbt_ipc_cdev);
+#ifndef FP_ULTRA_QCOM_P11
 	cdev_del(&fp_dev->qbt_fd_cdev);
+#endif
 
 	pr_debug("fp_ultra_dev unregister success");
 }
@@ -1329,6 +1488,12 @@ static int fp_probe(struct platform_device *driver_device)
 	fp_dev->fingerdown = 0;
 	fp_dev->irq_request = false;
 	fp_dev->driver_device = driver_device;
+	fp_dev->intr2_side_config = 0;
+#ifdef FP_ULTRA_QCOM_P11
+	fp_dev->intr2_enable = false;
+	fp_dev->reset_pin_enable = false;
+	spin_lock_init(&fp_dev->intr2_events_lock);
+#endif
 	/* config fp power. */
 	fp_power_config(fp_dev);
 	/* get gpio info from dts or defination */
@@ -1398,9 +1563,13 @@ static int fp_probe(struct platform_device *driver_device)
 	if(fp_create_input_device() != 0) {
 		goto err_input_device;
 	}
+#ifndef FP_ULTRA_QCOM_P11
 	INIT_KFIFO(fp_dev->fd_events);
+#endif
 	INIT_KFIFO(fp_dev->ipc_events);
+#ifndef FP_ULTRA_QCOM_P11
 	init_waitqueue_head(&fp_dev->read_wait_queue_fd);
+#endif
 	init_waitqueue_head(&fp_dev->read_wait_queue_ipc);
 	init_waitqueue_head(&fp_dev->fp_wait_queue);
 	fp_dev->screen_state_wq = create_singlethread_workqueue("screen_state_wq");
@@ -1496,7 +1665,9 @@ static int fp_remove(struct platform_device *driver_device)
 	fp_netlink_destroy(fp_dev);
 	fp_dev->fp_netlink_enabled = 0;
 	fp_ultra_dev_unregister();
+#ifndef FP_ULTRA_QCOM_P11
 	fp_dev->fd_gpio.work_init = false;
+#endif
 	fp_dev->fw_ipc.work_init = false;
 	cdev_del(&fp_dev->fpid_cdev);
 	device_destroy(fp_dev->class, fp_dev->fpid_cdev.dev);

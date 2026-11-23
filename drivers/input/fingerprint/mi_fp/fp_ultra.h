@@ -8,18 +8,23 @@
 #include <linux/time.h>
 
 #define DTS_IPC_GPIO				"xiaomi,gpio_ipc"
+#ifndef FP_ULTRA_QCOM_P11
 #define DTS_WUHB_GPIO				"xiaomi,gpio_wuhb"
+#endif
 #define DTS_INTR2_GPIO				"xiaomi,gpio_intr2"
 
 #define FP_IPC_DEV_NAME "qbt_ipc"
+#ifndef FP_ULTRA_QCOM_P11
 #define FP_WUHB_DEV_NAME "qbt_fd"
 
 #define FD_GPIO_ACTIVE_LOW 0  // FIXME: Need to get this flag value from devicetree
+#endif
 
 #define QBT_INPUT_DEV_VERSION 0x0100
 
 #define MAX_FW_EVENTS 128
 
+#ifndef FP_ULTRA_QCOM_P11
 /*
  * enum qbt_finger_events -
  *      enumeration of qbt finger events
@@ -32,6 +37,7 @@ enum qbt_finger_events {
 	QBT_EVENT_FINGER_DOWN,
 	QBT_EVENT_FINGER_MOVE
 };
+#endif
 
 /*
  * enum qbt_fw_event -
@@ -41,8 +47,10 @@ enum qbt_finger_events {
  * @FW_EVENT_IPC - an IPC from the firmware is pending
  */
 enum qbt_fw_event {
+#ifndef FP_ULTRA_QCOM_P11
 	FW_EVENT_FINGER_DOWN = 1,
 	FW_EVENT_FINGER_UP = 2,
+#endif
 	FW_EVENT_IPC = 3,
 };
 
@@ -55,6 +63,7 @@ struct fw_ipc_info {
     bool work_init;
 };
 
+#ifndef FP_ULTRA_QCOM_P11
 struct finger_detect_gpio {
 	int gpio;
 	int active_low;
@@ -65,11 +74,13 @@ struct finger_detect_gpio {
 	bool irq_enabled;
     bool work_init;
 };
+#endif
 
 struct ipc_event {
 	enum qbt_fw_event ev;
 };
 
+#ifndef FP_ULTRA_QCOM_P11
 struct fd_event {
 	struct timespec64 timestamp;
 	int X;
@@ -92,5 +103,6 @@ struct fd_userspace_buf {
 struct qbt_wuhb_connected_status {
 	_Bool is_wuhb_connected;
 };
+#endif
 
 #endif

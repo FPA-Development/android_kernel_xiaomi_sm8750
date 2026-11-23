@@ -11,3 +11,13 @@ config FINGERPRINT_MI_FP
 
 	  To compile this driver as a module, choose M here: the module will
 	  be called mi_fp.
+
+config ULTRA_FINGERPRINT_P11
+	bool "Xiaomi P11 (annibale) ultrasonic fingerprint variant"
+	depends on FINGERPRINT_MI_FP
+	default n
+	help
+	  Enable the Qualcomm ultrasonic fingerprint configuration used on
+	  Xiaomi P11 (annibale), where finger detection is handled over the
+	  touch IC (TIC) via intr2-side-config rather than a WUHB GPIO.
+
