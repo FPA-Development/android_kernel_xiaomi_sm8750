@@ -215,8 +215,10 @@ struct strategy_buckchg_dev {
 	int vusb_ovp_location;
 	int allow_start_ffc_batt_soc_thr;
 	int terminated_by_cp;
+	int ffc_terminated_by_cp;
 	int sw_cv_fcc_step;
 	int sw_cv_fv_step;
+	int sw_cv_fcc_limit_buffer;
 
 	/* charge pump watch */
 	int cp_absent_retry_count;

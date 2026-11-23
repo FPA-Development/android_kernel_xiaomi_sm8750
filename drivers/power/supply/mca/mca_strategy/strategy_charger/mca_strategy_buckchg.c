@@ -364,10 +364,14 @@ static void strategy_buckchg_parse_dt(struct strategy_buckchg_dev *info)
 			  BUCKCHG_VUSB_OVP_BEFORE_CP);
 	mca_parse_dts_u32(np, "terminated_by_cp",
 			  (u32 *)&info->terminated_by_cp, 0);
+	mca_parse_dts_u32(np, "ffc_terminated_by_cp",
+			  (u32 *)&info->ffc_terminated_by_cp, 0);
 	mca_parse_dts_u32(np, "sw_cv_fcc_step", (u32 *)&info->sw_cv_fcc_step,
 			  SW_CV_FCC_STEP_DEFAULT);
 	mca_parse_dts_u32(np, "sw_cv_fv_step", (u32 *)&info->sw_cv_fv_step,
 			  SW_CV_FV_STEP_DEFAULT);
+	mca_parse_dts_u32(np, "sw_cv_fcc_limit_buffer",
+			  (u32 *)&info->sw_cv_fcc_limit_buffer, 0);
 
 	info->support_diff_temp_comp =
 		of_property_read_bool(np, "support_diff_temp_comp");
@@ -1600,6 +1604,8 @@ static void strategy_buckchg_enable_fast_charge_mode(struct strategy_buckchg_dev
 	strategy_class_fg_ops_get_temperature(&temp);
 	temp /= 10;
 	fastcharge = strategy_class_fg_get_fastcharge();
+	if (info->ffc_terminated_by_cp && fastcharge)
+		return;
 
 	if (info->support_base_flip || info->base_flip_same) {
 		iterm = info->parallel_iterm;
@@ -2381,7 +2387,7 @@ static void strategy_buckchg_sw_cv_workfunc(struct work_struct *work)
 		interval = CHARGE_SW_CV_WORK_NORMAL_INTERVAL;
 	} else {
 		step = info->sw_cv_fcc_step;
-		if (ibat_ma - step > iterm) {
+		if (ibat_ma - step > iterm + info->sw_cv_fcc_limit_buffer) {
 			if (fcc - ibat_ma < step * 2)
 				target = fcc - step;
 			else
