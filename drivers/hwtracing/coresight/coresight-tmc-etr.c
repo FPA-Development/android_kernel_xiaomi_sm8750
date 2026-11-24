@@ -1264,6 +1264,12 @@ static struct etr_buf *tmc_etr_get_sysfs_buffer(struct coresight_device *csdev)
 	 * buffer, provided the size matches. Any allocation has to be done
 	 * with the lock released.
 	 */
+	/*
+	 * If the ETR is already enabled, continue with the existing buffer.
+	 */
+	if (READ_ONCE(drvdata->mode) == CS_MODE_SYSFS)
+		return drvdata->sysfs_buf;
+
 	if ((drvdata->out_mode == TMC_ETR_OUT_MODE_MEM)
 		|| (drvdata->out_mode == TMC_ETR_OUT_MODE_USB &&
 			drvdata->usb_data->usb_mode ==
@@ -1322,6 +1328,15 @@ static int tmc_enable_etr_sink_sysfs(struct coresight_device *csdev)
 		return PTR_ERR(sysfs_buf);
 
 	spin_lock_irqsave(&drvdata->spinlock, flags);
+
+	/*
+	 * Since the sysfs buffer allocation and the hardware enablement is not
+	 * in the same critical region, it's possible to race with the perf.
+	 */
+	if (drvdata->mode == CS_MODE_PERF) {
+		ret = -EBUSY;
+		goto unlock_out;
+	}
 
 	if ((drvdata->out_mode == TMC_ETR_OUT_MODE_MEM) ||
 		(drvdata->out_mode == TMC_ETR_OUT_MODE_USB &&
