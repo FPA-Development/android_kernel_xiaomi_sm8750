@@ -63,6 +63,7 @@ enum mca_strategy_status {
 	STRATEGY_STATUS_TYPE_FORCE_FULL_STATUS,
 	STRATEGY_STATUS_TYPE_GET_VOLTAGE_MAX,
 	STRATEGY_STATUS_TYPE_GET_CURRENT_MAX,
+	STRATEGY_STATUS_TYPE_IS_SUPPORT_PPS_100W,
 	STRATEGY_STATUS_TYPE_MAX,
 };
 
@@ -130,5 +131,6 @@ int mca_strategy_func_get_status(enum mca_strategy_func_type type, int func,
 				 int *status);
 int mca_strategy_func_set_config(enum mca_strategy_func_type type, int conifg,
 				 int value);
+bool mca_strategy_is_support_pps_100w(void);
 
 #endif /* __MCA_STRATEGY_CLASS_H */

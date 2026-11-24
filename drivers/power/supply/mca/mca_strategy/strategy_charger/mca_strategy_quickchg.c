@@ -217,6 +217,10 @@ static bool stategy_quickchg_is_pdo_9v(struct mca_quick_charge_info *info)
 	    info->proc_data.adp_type != XM_CHARGER_TYPE_PD_VERIFY)
 		return false;
 
+	if (info->proc_data.adp_type == XM_CHARGER_TYPE_PPS &&
+	    mca_strategy_is_support_pps_100w())
+		return false;
+
 	if (protocol_class_get_adapter_power_cap(ADAPTER_PROTOCOL_PD, &cap))
 		return false;
 
@@ -378,8 +382,12 @@ static void mca_quick_charge_stop_charging(struct mca_quick_charge_info *info)
 
 	info->check_vbat_ov = false;
 	info->pmih_fcc = 0;
-	proc->cur_adp_volt = info->trigger_antr_burn ? MCA_QUICK_CHG_ADP_DEFAULT_VOLT :
-		MCA_QUICK_CHG_ADP_FIXED_9V;
+	if (info->trigger_antr_burn ||
+	    (proc->adp_type == XM_CHARGER_TYPE_PPS &&
+	     mca_strategy_is_support_pps_100w()))
+		proc->cur_adp_volt = MCA_QUICK_CHG_ADP_DEFAULT_VOLT;
+	else
+		proc->cur_adp_volt = MCA_QUICK_CHG_ADP_FIXED_9V;
 	proc->cur_adp_cur = MCA_QUICK_CHG_OPEN_PATH_CURR;
 	info->stop_pmic = false;
 	proc->stop_charging = false;
@@ -471,7 +479,8 @@ static void mca_eu_pps_anti_disconnection_strategy(struct mca_quick_charge_info 
 	struct mca_quick_charge_process_data *proc = &info->proc_data;
 	time64_t now;
 
-	if (!info->is_eu_model)
+	if (proc->adp_type != XM_CHARGER_TYPE_PPS ||
+	    !mca_strategy_is_support_pps_100w())
 		return;
 
 	if (!info->online) {
@@ -482,9 +491,6 @@ static void mca_eu_pps_anti_disconnection_strategy(struct mca_quick_charge_info 
 		mca_log_info("reset param\n");
 		return;
 	}
-
-	if (proc->adp_type != XM_CHARGER_TYPE_PPS)
-		return;
 
 	if (proc->ibus >= proc->max_adp_curr - 200) {
 		count = 0;
@@ -548,7 +554,8 @@ static int mca_quick_charge_adjust_adapter_mode(struct mca_quick_charge_info *in
 		if (pcap->max_voltage >= (18000 << series) &&
 		    pcap->min_voltage <= (12000 << series) &&
 		    (proc->adp_type == XM_CHARGER_TYPE_PD_VERIFY ||
-		     info->is_eu_model || info->effective_on_p_generation)) {
+		     mca_strategy_is_support_pps_100w() ||
+		     info->effective_on_p_generation)) {
 			mode |= MCA_QUICK_CHG_MODE_DIV_4;
 			proc->adp_info[i].adp_mode = MCA_QUICK_CHG_MODE_DIV_4;
 			power = pcap->max_current * min(pcap->max_voltage, 21000) / 1000;
@@ -680,6 +687,7 @@ static void mca_quick_charge_update_work_mode_para(struct mca_quick_charge_info 
 		proc->delta_volt = info->div_delta_volt[mode];
 		proc->single_curr = info->div_single_curr[mode];
 		proc->max_curr = info->div_max_curr[mode];
+		proc->non_mi_pps_curr = info->non_mi_pps_max_curr[mode];
 		proc->delta_ibat = info->div_delta_ibat[mode];
 		proc->multi_ibus_th = info->multi_ibus_th[mode];
 		proc->again_multi_ibus_th = info->again_multi_ibus_th[mode];
@@ -2023,6 +2031,9 @@ static int mca_quick_charge_select_max_ibat(struct mca_quick_charge_info *info, 
 		cur_max = min(cur_max, secure_cur);
 	if (proc->max_adap_ibat)
 		cur_max = min(cur_max, proc->max_adap_ibat);
+	if (mca_strategy_is_support_pps_100w() &&
+	    proc->adp_type == XM_CHARGER_TYPE_PPS && proc->non_mi_pps_curr)
+		cur_max = min(cur_max, proc->non_mi_pps_curr);
 	cur_max = min(cur_max, channel_cur);
 	cur_max = min(cur_max, proc->temp_max_cur[FG_IC_MASTER]);
 	cur_max = min(cur_max, proc->ratio * proc->max_adp_curr);
@@ -2034,7 +2045,8 @@ static int mca_quick_charge_select_max_ibat(struct mca_quick_charge_info *info, 
 		cur_max = max(cur_max, iterm);
 
 	/* leave the non-EU PPS adapter some headroom, more without power boost */
-	if (proc->adp_type == XM_CHARGER_TYPE_PPS && !info->is_eu_model) {
+	if (proc->adp_type == XM_CHARGER_TYPE_PPS && !info->is_eu_model &&
+	    !mca_strategy_is_support_pps_100w()) {
 		pps_cur = cur_max - MCA_PPS_FCC_MARGIN;
 		if (info->smartchg_data.pwr_boost_state)
 			cur_max = min(pps_cur, MCA_PPS_BOOST_FCC_MAX);
@@ -2960,7 +2972,8 @@ static void mca_quick_charge_pps_ptf_work(struct work_struct *work)
 	struct mca_quick_charge_info *info = container_of(to_delayed_work(work),
 		struct mca_quick_charge_info, pps_ptf_work);
 
-	if (!((info->proc_data.adp_type == XM_CHARGER_TYPE_PPS && info->is_eu_model) ||
+	if (!((info->proc_data.adp_type == XM_CHARGER_TYPE_PPS &&
+	       mca_strategy_is_support_pps_100w()) ||
 	      info->fake_pps_ptf)) {
 		check_mum = 0;
 		return;
@@ -3144,7 +3157,7 @@ static int mca_quick_charge_process_event(int event, int value, void *data)
 			break;
 		case XM_CHARGER_TYPE_PPS:
 			proc->cur_protocol = ADAPTER_PROTOCOL_PPS;
-			if (info->fake_pps_ptf || info->is_eu_model)
+			if (info->fake_pps_ptf || mca_strategy_is_support_pps_100w())
 				schedule_delayed_work(&info->pps_ptf_work,
 					msecs_to_jiffies(MCA_QUICK_CHG_PPS_PTF_INTERVAL));
 			break;
@@ -3721,6 +3734,11 @@ static void mca_quick_charge_parse_chg_mode_info(struct device_node *node,
 		MCA_QUICK_CHG_OPEN_PATH_IBUS_TH,
 		MCA_QUICK_CHG_OPEN_PATH_IBUS_TH,
 	};
+	static const int def_non_mi_pps_max_curr[] = {
+		MCA_QUICK_CHG_SINGLE_DIV1_CURR_TH,
+		MCA_QUICK_CHG_SINGLE_DIV2_CURR_TH,
+		MCA_QUICK_CHG_SINGLE_DIV4_CURR_TH,
+	};
 	static const int def_zero[] = { 0, 0, 0 };
 	u32 data[CHG_MODE_MAX] = { 0 };
 
@@ -3755,6 +3773,11 @@ static void mca_quick_charge_parse_chg_mode_info(struct device_node *node,
 		CHG_MODE_MAX, info->div_single_curr);
 	mca_log_info("div_max_curr %d %d %d\n", info->div_max_curr[CHG_MODE_DIV1],
 		info->div_max_curr[CHG_MODE_DIV2], info->div_max_curr[CHG_MODE_DIV4]);
+
+	mca_quick_charge_parse_u32_array(node, "non_mi_pps_max_curr", info->non_mi_pps_max_curr,
+		CHG_MODE_MAX, def_non_mi_pps_max_curr);
+	mca_log_info("non_mi_pps_max_curr %d %d %d\n", info->non_mi_pps_max_curr[CHG_MODE_DIV1],
+		info->non_mi_pps_max_curr[CHG_MODE_DIV2], info->non_mi_pps_max_curr[CHG_MODE_DIV4]);
 
 	mca_quick_charge_parse_u32_array(node, "multi_ibus_th", info->multi_ibus_th,
 		CHG_MODE_MAX, def_multi_ibus_th);
@@ -3805,9 +3828,44 @@ static void mca_quick_charge_parse_chg_mode_info(struct device_node *node,
 static void mca_quick_charge_parse_vstep_para(struct mca_quick_charge_info *info)
 {
 	struct device_node *node = info->dev->of_node;
-	int data[VSTEP_PARA_MAX_GROUP * MCA_QUICK_CHG_VSTEP_PARA_MAX] = { 0 };
-	int len, row, *col;
+	int data[VSTEP_PARA_MAX_GROUP * MCA_QUICK_CHG_VSTEP_PARA_V2_MAX] = { 0 };
+	int count, len, row, *col;
+	bool is_v2 = false;
 
+	count = of_property_count_strings(node, "vstep_para");
+	if (count > 0 &&
+	    count <= VSTEP_PARA_MAX_GROUP * MCA_QUICK_CHG_VSTEP_PARA_V2_MAX &&
+	    !(count % MCA_QUICK_CHG_VSTEP_PARA_V2_MAX)) {
+		len = mca_parse_dts_string_array(node, "vstep_para", data,
+			VSTEP_PARA_MAX_GROUP, MCA_QUICK_CHG_VSTEP_PARA_V2_MAX);
+		if (len == count) {
+			is_v2 = true;
+			for (row = 0; row < len / MCA_QUICK_CHG_VSTEP_PARA_V2_MAX; row++) {
+				int ratio = data[row * MCA_QUICK_CHG_VSTEP_PARA_V2_MAX +
+					MCA_QUICK_CHG_VSTEP_V2_VOLT_RATIO];
+
+				if (ratio != 1 && ratio != 2 && ratio != 4) {
+					is_v2 = false;
+					break;
+				}
+			}
+		}
+	}
+
+	if (is_v2) {
+		for (row = 0; row < len / MCA_QUICK_CHG_VSTEP_PARA_V2_MAX &&
+		     row < VSTEP_PARA_MAX_GROUP; row++) {
+			col = &data[row * MCA_QUICK_CHG_VSTEP_PARA_V2_MAX];
+			info->vstep_para[row].volt_ratio = col[MCA_QUICK_CHG_VSTEP_V2_VOLT_RATIO];
+			info->vstep_para[row].cycle_count = col[MCA_QUICK_CHG_VSTEP_V2_CYCLE_COUNT];
+			info->vstep_para[row].cur_gap = col[MCA_QUICK_CHG_VSTEP_V2_CURRENT];
+			info->vstep_para[row].vbat_gap = col[MCA_QUICK_CHG_VSTEP_V2_VBAT_GAP];
+			info->vstep_para[row].vstep_ratio = col[MCA_QUICK_CHG_VSTEP_V2_VSTEP_RATIO];
+		}
+		return;
+	}
+
+	memset(data, 0, sizeof(data));
 	len = mca_parse_dts_string_array(node, "vstep_para", data, VSTEP_PARA_MAX_GROUP,
 		MCA_QUICK_CHG_VSTEP_PARA_MAX);
 	for (row = 0; row < len / MCA_QUICK_CHG_VSTEP_PARA_MAX && row < VSTEP_PARA_MAX_GROUP; row++) {

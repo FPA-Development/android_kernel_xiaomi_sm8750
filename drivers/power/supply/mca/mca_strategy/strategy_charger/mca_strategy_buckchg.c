@@ -372,6 +372,9 @@ static void strategy_buckchg_parse_dt(struct strategy_buckchg_dev *info)
 			  SW_CV_FV_STEP_DEFAULT);
 	mca_parse_dts_u32(np, "sw_cv_fcc_limit_buffer",
 			  (u32 *)&info->sw_cv_fcc_limit_buffer, 0);
+	mca_parse_dts_u32(np, "support_pps_100w",
+			  (u32 *)&info->support_pps_100w,
+			  MCA_STRATEGY_SUPPORT_PPS_NONE);
 
 	info->support_diff_temp_comp =
 		of_property_read_bool(np, "support_diff_temp_comp");
@@ -1871,6 +1874,15 @@ static void strategy_buckchg_select_charg_para(struct strategy_buckchg_dev *info
 			ibat_limit = CHARGE_PPS_PTF_CHARGE_DEFAULT;
 			break;
 		}
+		if (real_type == XM_CHARGER_TYPE_PPS &&
+		    mca_strategy_is_support_pps_100w()) {
+			cap_curr = info->pwr_cap.cap[0].max_current;
+			ibus_limit = cap_curr ? min_t(unsigned int, cap_curr,
+						      CHARGE_PPS_100W_INPUT_MAX) :
+						CHARGE_PPS_100W_INPUT_DEFAULT;
+			ibat_limit = chg_pd;
+			break;
+		}
 		cap_curr = info->pwr_cap.cap[info->proc_data.curr_pd_pos].max_current;
 		ibus_limit = min_t(unsigned int, in_pd, cap_curr);
 		ibat_limit = chg_pd;
@@ -1987,6 +1999,9 @@ static void strategy_buck_update_req_volt(struct strategy_buckchg_dev *info)
 
 	if (strategy_buckchg_is_qc(real_type))
 		allow_9v = 1;
+	else if (real_type == XM_CHARGER_TYPE_PPS &&
+		 mca_strategy_is_support_pps_100w())
+		allow_9v = 0;
 	else if (strategy_buckchg_is_pd(real_type))
 		allow_9v = info->proc_data.is_pd_9v;
 	else
@@ -2833,6 +2848,29 @@ static int strategy_buckchg_get_current_max(struct strategy_buckchg_dev *info)
 	return ibus_limit;
 }
 
+static bool strategy_buckchg_is_support_pps_100w(struct strategy_buckchg_dev *info)
+{
+	struct mca_hwid_info *hwid;
+
+	if (!info)
+		return false;
+
+	if (info->is_eu_model ||
+	    info->support_pps_100w == MCA_STRATEGY_SUPPORT_PPS_ALL)
+		return true;
+
+	hwid = mca_get_hwid_info();
+	if (!hwid)
+		return false;
+
+	if (info->support_pps_100w == MCA_STRATEGY_SUPPORT_PPS_NON_CN)
+		return hwid->country_version != CountryCN;
+	if (info->support_pps_100w == MCA_STRATEGY_SUPPORT_PPS_CN)
+		return hwid->country_version == CountryCN;
+
+	return false;
+}
+
 static int strategy_buckchg_get_status(int status, int *value, void *data)
 {
 	struct strategy_buckchg_dev *info = data;
@@ -2858,6 +2896,9 @@ static int strategy_buckchg_get_status(int status, int *value, void *data)
 		break;
 	case STRATEGY_STATUS_TYPE_IBUS:
 		*value = info->proc_data.ibus;
+		break;
+	case STRATEGY_STATUS_TYPE_IS_SUPPORT_PPS_100W:
+		*value = strategy_buckchg_is_support_pps_100w(info);
 		break;
 	case STRATEGY_STATUS_TYPE_GET_VOLTAGE_MAX:
 		*value = info->proc_data.voltage;

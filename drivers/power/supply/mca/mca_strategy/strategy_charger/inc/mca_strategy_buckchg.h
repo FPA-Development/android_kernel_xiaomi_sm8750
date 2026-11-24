@@ -58,6 +58,8 @@
 
 /* Input and charge current defaults per charger type, in milliamps. */
 #define CHARGE_PPS_INPUT_DEFAULT		3000
+#define CHARGE_PPS_100W_INPUT_MAX		2500
+#define CHARGE_PPS_100W_INPUT_DEFAULT		1500
 #define CHARGE_DCP_INPUT_DEFAULT		1500
 #define CHARGE_DCP_INPUT_BOOST			2000
 #define CHARGE_CDP_INPUT_DEFAULT		1500
@@ -93,6 +95,14 @@
 
 /* Where the port's over-voltage protection sits relative to the pump. */
 #define BUCKCHG_VUSB_OVP_BEFORE_CP		1
+
+/* Which regions enable 100W universal PPS support, as encoded in DT. */
+enum mca_strategy_support_pps_type {
+	MCA_STRATEGY_SUPPORT_PPS_NONE = 0,
+	MCA_STRATEGY_SUPPORT_PPS_CN,
+	MCA_STRATEGY_SUPPORT_PPS_NON_CN,
+	MCA_STRATEGY_SUPPORT_PPS_ALL,
+};
 
 /* How the pack is put together, as the device tree numbers it. */
 enum mca_buckchg_battery_type {
@@ -219,6 +229,7 @@ struct strategy_buckchg_dev {
 	int sw_cv_fcc_step;
 	int sw_cv_fv_step;
 	int sw_cv_fcc_limit_buffer;
+	int support_pps_100w;
 
 	/* charge pump watch */
 	int cp_absent_retry_count;

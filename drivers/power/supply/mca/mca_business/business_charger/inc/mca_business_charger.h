@@ -99,6 +99,7 @@ struct business_charger {
 	int stop_handle_charge;
 	int support_wls;
 	int cp_type;
+	int verify_process_end;
 	/* Event thread, kept so that remove can stop it. */
 	struct task_struct *event_task;
 };

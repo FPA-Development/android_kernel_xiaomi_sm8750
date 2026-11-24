@@ -198,6 +198,15 @@ enum mca_quick_charge_volt_step_para_ele {
 	MCA_QUICK_CHG_VSTEP_PARA_MAX,
 };
 
+enum mca_quick_charge_volt_step_para_v2_ele {
+	MCA_QUICK_CHG_VSTEP_V2_VOLT_RATIO = 0,
+	MCA_QUICK_CHG_VSTEP_V2_CYCLE_COUNT,
+	MCA_QUICK_CHG_VSTEP_V2_CURRENT,
+	MCA_QUICK_CHG_VSTEP_V2_VBAT_GAP,
+	MCA_QUICK_CHG_VSTEP_V2_VSTEP_RATIO,
+	MCA_QUICK_CHG_VSTEP_PARA_V2_MAX,
+};
+
 enum mca_quick_charge_volt_step_para_ex_ele {
 	MCA_QUICK_CHG_DELTA_V_THR = 0,
 	MCA_QUICK_CHG_VSTEP_MULTIPLIER,
@@ -208,7 +217,9 @@ enum mca_quick_charge_volt_step_para_ex_ele {
 
 struct mca_quick_charge_volt_step_para {
 	int volt_ratio;
+	int cycle_count;
 	int cur_gap;
+	int vbat_gap;
 	int vstep_ratio;
 };
 
@@ -404,6 +415,7 @@ struct mca_quick_charge_process_data {
 	int delta_ibat;
 	int single_curr;
 	int max_curr;
+	int non_mi_pps_curr;
 	int open_path;
 	int multi_ibus_th;
 	int again_multi_ibus_th;
@@ -500,6 +512,7 @@ struct mca_quick_charge_info {
 	int div_delta_volt[CHG_MODE_MAX];
 	int div_single_curr[CHG_MODE_MAX];
 	int div_max_curr[CHG_MODE_MAX];
+	int non_mi_pps_max_curr[CHG_MODE_MAX];
 	int open_path_th[CHG_MODE_MAX];
 	int multi_ibus_th[CHG_MODE_MAX];
 	int again_multi_ibus_th[CHG_MODE_MAX];

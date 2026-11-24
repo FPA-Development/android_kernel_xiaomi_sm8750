@@ -388,23 +388,38 @@ static void business_charger_report_quick_charge_type_work(struct work_struct *w
 	int power_max = 0;
 	int icon_type;
 
-	if (charger->real_type != XM_CHARGER_TYPE_PD_VERIFY)
-		return;
+	if (charger->real_type == XM_CHARGER_TYPE_PD_VERIFY) {
+		protocol_class_get_adapter_max_power(ADAPTER_PROTOCOL_PPS,
+						     (u32 *)&power_max);
+		charger->wired_power_max = power_max;
+		if (power_max >= QUICK_CHG_TYPE_SUPER_CHG_POWER)
+			icon_type = ADP_ICON_TYPE_SUPER;
+		else if (power_max >= QUICK_CHG_TYPE_TURBO_CHG_POWER)
+			icon_type = ADP_ICON_TYPE_TURBO;
+		else if (power_max >= QUICK_CHG_TYPE_FLASH_CHG_POWER)
+			icon_type = ADP_ICON_TYPE_FLASH;
+		else
+			icon_type = ADP_ICON_TYPE_FAST;
 
-	protocol_class_get_adapter_max_power(ADAPTER_PROTOCOL_PPS,
-					     (u32 *)&power_max);
-	charger->wired_power_max = power_max;
-	if (power_max >= QUICK_CHG_TYPE_SUPER_CHG_POWER)
-		icon_type = ADP_ICON_TYPE_SUPER;
-	else if (power_max >= QUICK_CHG_TYPE_TURBO_CHG_POWER)
-		icon_type = ADP_ICON_TYPE_TURBO;
-	else if (power_max >= QUICK_CHG_TYPE_FLASH_CHG_POWER)
-		icon_type = ADP_ICON_TYPE_FLASH;
-	else
-		icon_type = ADP_ICON_TYPE_FAST;
+		mca_log_info("power_max: %d, icon_type: %d\n", power_max,
+			     icon_type);
+		business_charger_report_wired_quick_charge_type(charger,
+								icon_type);
+	} else if (charger->real_type == XM_CHARGER_TYPE_PPS &&
+		   charger->verify_process_end &&
+		   mca_strategy_is_support_pps_100w()) {
+		protocol_class_get_adapter_max_power(ADAPTER_PROTOCOL_PPS,
+						     (u32 *)&power_max);
+		charger->wired_power_max = max(charger->wired_power_max,
+					       power_max);
+		icon_type = power_max >= QUICK_CHG_TYPE_TURBO_CHG_POWER ?
+			    ADP_ICON_TYPE_TURBO : ADP_ICON_TYPE_FAST;
 
-	mca_log_info("power_max: %d, icon_type: %d\n", power_max, icon_type);
-	business_charger_report_wired_quick_charge_type(charger, icon_type);
+		mca_log_info("real_type: %d, power_max: %d, icon_type: %d\n",
+			     charger->real_type, power_max, icon_type);
+		business_charger_report_wired_quick_charge_type(charger,
+								icon_type);
+	}
 }
 
 static void business_charger_update_wired_quick_charge_type(struct business_charger *charger)
@@ -551,6 +566,7 @@ static void business_charger_process_online_change(struct business_charger *char
 		charger->dam_test_flag = 0;
 		charger->wired_qucik_charge_type = 0;
 		charger->wired_power_max = 0;
+		charger->verify_process_end = 0;
 		__pm_relax(charger->online_wake_lock);
 		mca_charge_mievent_set_state(MIEVENT_STATE_PLUG, 0);
 		mca_log_info("relax wake lock\n");
@@ -868,16 +884,26 @@ static void business_charger_process_verify_process_change(struct business_charg
 							   unsigned int event,
 							   int verify_process_end)
 {
-	mca_log_info("pd verify process done: %d\n", !verify_process_end);
+	charger->verify_process_end = !verify_process_end;
+	mca_log_info("pd verify process done: %d\n", charger->verify_process_end);
 	mca_strategy_func_process(STRATEGY_FUNC_TYPE_BUCK_CHARGE, event,
-				  !verify_process_end);
+				  charger->verify_process_end);
+	if (charger->verify_process_end &&
+	    charger->real_type == XM_CHARGER_TYPE_PPS &&
+	    mca_strategy_is_support_pps_100w()) {
+		cancel_delayed_work_sync(&charger->report_quick_charge_type_work);
+		schedule_delayed_work(&charger->report_quick_charge_type_work, 0);
+	}
 }
 
 static void business_charger_process_batt_health_change(struct business_charger *charger,
 							unsigned int event)
 {
 	business_charger_update_wired_quick_charge_type(charger);
-	if (charger->real_type == XM_CHARGER_TYPE_PD_VERIFY)
+	if (charger->real_type == XM_CHARGER_TYPE_PD_VERIFY ||
+	    (charger->real_type == XM_CHARGER_TYPE_PPS &&
+	     charger->verify_process_end &&
+	     mca_strategy_is_support_pps_100w()))
 		schedule_delayed_work(&charger->report_quick_charge_type_work, 0);
 	mca_strategy_func_process(STRATEGY_FUNC_TYPE_BASIC_WIRELESS, event, 0);
 }

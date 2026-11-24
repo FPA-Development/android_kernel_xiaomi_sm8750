@@ -92,6 +92,19 @@ int mca_strategy_func_set_config(enum mca_strategy_func_type type, int conifg,
 }
 EXPORT_SYMBOL(mca_strategy_func_set_config);
 
+bool mca_strategy_is_support_pps_100w(void)
+{
+	int support = 0;
+
+	if (mca_strategy_func_get_status(STRATEGY_FUNC_TYPE_BUCK_CHARGE,
+					 STRATEGY_STATUS_TYPE_IS_SUPPORT_PPS_100W,
+					 &support))
+		return false;
+
+	return !!support;
+}
+EXPORT_SYMBOL(mca_strategy_is_support_pps_100w);
+
 /*
  * Nothing in the device tree describes the strategy class: it holds no
  * hardware and exists so that the strategies and the drivers that prompt them
