@@ -1117,7 +1117,6 @@
   ksize
   ksoftirqd
   kstat_irqs_usr
-  kstrdup
   kstrdup_const
   kstrndup
   kstrtobool
